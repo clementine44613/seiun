@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.8.1'
+    id 'net.fabricmc.fabric-loom-remap' version '1.14.10'
     id 'maven-publish'
 }
 
@@ -45,6 +45,7 @@ tasks.named('remapJar') {
     destinationDirectory = file("$buildDir/libs")
     from("$buildDir/classes/java/main")
     from("$buildDir/resources/main")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 loom {
@@ -63,4 +64,5 @@ jar {
             'Fabric-Loader-Version': project.loader_version
         ])
     }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }

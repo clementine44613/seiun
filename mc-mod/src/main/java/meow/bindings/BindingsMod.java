@@ -3,10 +3,11 @@ package meow.bindings;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import net.fabricmc.api.ModInitializer;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.WorldSavePath;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -29,8 +30,9 @@ public class BindingsMod implements ModInitializer {
     public void onInitialize() {
     }
 
-    public static String getBindingForUsername(String username, ServerWorld world) {
-        Map<String, Entry> map = loadBindings(world);
+    public static String getBindingForUsername(String username, MinecraftServer server) {
+        if (server == null) return null;
+        Map<String, Entry> map = loadBindings(server);
         if (map == null) return null;
         String lower = username.toLowerCase();
         for (Entry entry : map.values()) {
@@ -41,7 +43,7 @@ public class BindingsMod implements ModInitializer {
         return null;
     }
 
-    public static Map<String, Entry> loadBindings(ServerWorld world) {
+    public static Map<String, Entry> loadBindings(MinecraftServer server) {
         long now = System.currentTimeMillis();
         if (now - lastFileCheck < 5000) {
             return cachedBindings;
@@ -51,10 +53,10 @@ public class BindingsMod implements ModInitializer {
                 return cachedBindings;
             }
             try {
-                if (world == null) {
+                if (server == null) {
                     return cachedBindings;
                 }
-                Path path = world.getServer().getSavePath(WorldSavePath.ROOT).resolve("bindings.json");
+                Path path = server.getSavePath(WorldSavePath.ROOT).resolve("bindings.json");
                 if (Files.exists(path)) {
                     try (BufferedReader reader = Files.newBufferedReader(path)) {
                         Map<String, Entry> map = GSON.fromJson(reader, MAP_TYPE);
@@ -72,9 +74,8 @@ public class BindingsMod implements ModInitializer {
     }
 
     public static void kickPlayer(ServerPlayerEntity player, String reason) {
-        ServerWorld world = player.getServerWorld();
-        if (world == null) return;
-        world.getServer().execute(() -> {
+        MinecraftServer server = ((ServerPlayerEntityAccessor) player).getServer();
+        server.execute(() -> {
             if (player.isDisconnected()) return;
             player.networkHandler.disconnect(net.minecraft.text.Text.literal(reason));
         });
@@ -86,13 +87,19 @@ public class BindingsMod implements ModInitializer {
     }
 }
 
+@Mixin(ServerPlayerEntity.class)
+interface ServerPlayerEntityAccessor {
+    @Accessor("server")
+    MinecraftServer getServer();
+}
+
 @Mixin(net.minecraft.server.network.ServerPlayerEntity.class)
 class ServerPlayerEntityMixin {
     @Inject(at = @At("TAIL"), method = "<init>")
     private void meow$onConstruct(CallbackInfo ci) {
         ServerPlayerEntity player = (ServerPlayerEntity) (Object) this;
         String username = player.getName().getString();
-        String binding = BindingsMod.getBindingForUsername(username, player.getServerWorld());
+        String binding = BindingsMod.getBindingForUsername(username, ((ServerPlayerEntityAccessor) player).getServer());
         if (binding == null) {
             BindingsMod.kickPlayer(player, "You are not bound to this Minecraft username.");
         }
