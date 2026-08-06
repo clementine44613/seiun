@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "meow.bindings.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [],
+  "server": [
+    "meow.bindings.ServerPlayerManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

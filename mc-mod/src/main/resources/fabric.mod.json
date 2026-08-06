@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "seiun-auth",
+  "version": "1.0.0",
+  "name": "Seiun Auth",
+  "description": "Enforces Discord-to-Minecraft username bindings.",
+  "authors": ["Meow"],
+  "contact": {},
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["meow.bindings.BindingsMod"]
+  },
+  "mixins": [
+    "bindings.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "1.21.1",
+    "fabric-api": "*"
+  }
+}
