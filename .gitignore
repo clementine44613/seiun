@@ -1,3 +1,12 @@
+# Debug / diagnostic scripts
+diag-*.js
+test-*.js
+clear-global-commands.js
+
+# Dev artifacts
+CONVERSATION_LOG.md
+RECOVERY.md
+
 # Dependencies
 node_modules/
 
