@@ -28,19 +28,10 @@ function getOfflineUuid(username) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-// Resolve a UUID for a username, preferring the real Mojang UUID for premium
-// accounts and falling back to an offline UUID for cracked players.
-async function resolveUuid(username) {
-  try {
-    const premium = await getMojangUuid(username);
-    if (premium) {
-      // Mojang returns a UUID without dashes; format it with dashes.
-      return premium.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
-    }
-  } catch (err) {
-    // If Mojang API is unreachable, fall through to offline UUID.
-    console.error('Mojang lookup failed, using offline UUID:', err.message);
-  }
+// Resolve a UUID for a username.
+// Offline-mode servers need offline UUIDs for everyone,
+// even if the account is premium.
+function resolveUuid(username) {
   return getOfflineUuid(username);
 }
 
@@ -60,6 +51,13 @@ function createWhitelistService(config) {
   async function saveWhitelistArray(list) {
     const content = JSON.stringify(list, null, 2);
     await sftp.writeWhitelist(content);
+    const verify = await sftp.readWhitelist();
+    const roundTripped = JSON.parse(verify);
+    const match = Array.isArray(roundTripped) && roundTripped.length === list.length;
+    console.log(`Whitelist write verified: ${match ? 'OK' : 'MISMATCH'} (${list.length} entries)`);
+    if (!match) {
+      console.error('Whitelist verification failed. Wrote:', content);
+    }
   }
 
   async function isPlayerWhitelisted(username) {
@@ -69,22 +67,29 @@ function createWhitelistService(config) {
   }
 
   async function addPlayer(username) {
-    // Resolve the UUID: premium players get their real Mojang UUID,
-    // cracked players get a deterministic offline UUID.
-    const uuid = await resolveUuid(username);
+    const uuid = resolveUuid(username);
+    console.log(`Resolved UUID for ${username}: ${uuid}`);
 
     const list = await readWhitelistArray();
+    console.log(`Current whitelist entries: ${list.length}`);
     const lower = username.toLowerCase();
 
     if (list.some((entry) => (entry.name || '').toLowerCase() === lower)) {
-      return { added: false, already: true, message: `**${username}** is already whitelisted.` };
+      return { added: false, already: true, message: `**${username}** is already whitelisted.`, uuid };
     }
 
-    // Minecraft UUIDs use dashes in whitelist.json
-    list.push({ uuid, name: username });
+    const entry = { uuid, name: username };
+    list.push(entry);
+    console.log(`Adding to whitelist: ${JSON.stringify(entry)}`);
     await saveWhitelistArray(list);
 
-    return { added: true, already: false, message: `Added **${username}** to the whitelist!` };
+    const confirmed = await isPlayerWhitelisted(username);
+    if (!confirmed) {
+      console.error(`Whitelist verification failed for ${username} after write`);
+      return { added: false, already: false, message: `Failed to verify **${username}** was added to whitelist. Check SFTP path and file location.`, uuid };
+    }
+
+    return { added: true, already: false, message: `Added **${username}** to the whitelist!`, uuid };
   }
 
   async function removePlayer(username) {

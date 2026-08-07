@@ -29,6 +29,7 @@ module.exports = {
     username: required('SFTP_USERNAME'),
     password: required('SFTP_PASSWORD'),
     whitelistPath: process.env.WHITELIST_PATH || "1. Meow's Island/whitelist.json",
+    bindingsPath: process.env.BINDINGS_PATH || "1. Meow's Island/bindings.json",
   },
   rcon: {
     host: optional('RCON_HOST') || optional('SFTP_HOST'),

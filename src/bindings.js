@@ -22,10 +22,16 @@ function getBoundUsername(discordId) {
   return entry ? entry.username : null;
 }
 
-function setBinding(discordId, username) {
+function setBinding(discordId, username, uuid) {
   const bindings = loadBindings();
-  bindings[discordId] = { username, lastVerified: Date.now() };
+  bindings[discordId] = { username, uuid, lastVerified: Date.now() };
   saveBindings(bindings);
+}
+
+function getBindingUuid(discordId) {
+  const bindings = loadBindings();
+  const entry = bindings[discordId];
+  return entry ? entry.uuid : null;
 }
 
 function updateLastVerified(discordId) {
@@ -45,6 +51,7 @@ module.exports = {
   loadBindings,
   saveBindings,
   getBoundUsername,
+  getBindingUuid,
   setBinding,
   updateLastVerified,
   hasBinding,

@@ -29,7 +29,7 @@ const client = new Client({
 
 const whitelist = createWhitelistService(config);
 const bindings = require('./src/bindings');
-const Rcon = require('rcon-srcds');
+const Rcon = require('rcon-srcds').default;
 
 // Track pending verification requests: userId -> { username, code, timer }
 const pending = new Map();
@@ -66,13 +66,52 @@ function logCommand(command, user, details = '') {
 }
 
 async function pushBindingsToMcServer() {
-  if (!config.rcon || !config.rcon.password) return;
   try {
     const raw = JSON.stringify(bindings.loadBindings(), null, 2);
-    await whitelist.sftp.writeFile('/bindings.json', raw);
+    const path = config.sftp.bindingsPath.startsWith('/')
+      ? config.sftp.bindingsPath
+      : `/${config.sftp.bindingsPath}`;
+    console.log(`Pushing bindings.json to: ${path}`);
+    await whitelist.sftp.writeFile(path, raw);
     console.log('Pushed bindings.json to MC server.');
   } catch (err) {
     console.error('Failed to push bindings.json to MC server:', err.message);
+  }
+}
+
+async function reloadMcWhitelist() {
+  if (!config.rcon || !config.rcon.password) {
+    console.log('Whitelist reload skipped: RCON not configured');
+    return;
+  }
+  const rcon = new Rcon({
+    host: config.rcon.host,
+    port: config.rcon.port,
+    timeout: 10000,
+  });
+  try {
+    console.log(`Attempting RCON to ${config.rcon.host}:${config.rcon.port}...`);
+    await rcon.connect();
+    const authed = await rcon.authenticate(config.rcon.password);
+    if (!authed) {
+      console.error('Whitelist reload: RCON auth failed');
+      return;
+    }
+    const result = await rcon.execute('whitelist reload');
+    console.log('Reloaded whitelist on MC server.', result.trim());
+  } catch (err) {
+    console.error(`Whitelist reload failed: ${err.message}`);
+    console.error(`RCON config: host=${config.rcon.host}, port=${config.rcon.port}, password=${config.rcon.password ? '***' : 'MISSING'}`);
+    
+    if (err.message.includes('ETIMEDOUT') || err.message.includes('ECONNREFUSED')) {
+      console.error('RCON connection failed. Check:');
+      console.error('1. enable-rcon=true in server.properties');
+      console.error('2. rcon.password matches in server.properties and .env');
+      console.error('3. RCON port in server.properties matches RCON_PORT in .env');
+      console.error('4. Your host may use the game port (25565) instead of 25575 for RCON');
+    }
+  } finally {
+    await rcon.disconnect().catch(() => {});
   }
 }
 
@@ -149,6 +188,9 @@ async function disableApprovalButtons(message) {
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   await client.user.setActivity('/seiun-help', { type: ActivityType.Playing });
+
+  await pushBindingsToMcServer().catch(() => {});
+  await reloadMcWhitelist().catch(() => {});
 
   const commands = [
     new SlashCommandBuilder()
@@ -352,17 +394,29 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ flags: EPHEMERAL });
         try {
           const result = await whitelist.removePlayer(username);
-          await logToChannel(`${interaction.user} removed ${username} from whitelist.`);
+          // Also remove any Discord binding tied to this Minecraft username.
+          const current = bindings.loadBindings();
+          let removedBinding = false;
+          for (const [discordId, entry] of Object.entries(current)) {
+            if (entry && entry.username && entry.username.toLowerCase() === username.toLowerCase()) {
+              delete current[discordId];
+              removedBinding = true;
+            }
+          }
+          if (removedBinding) {
+            bindings.saveBindings(current);
+            await pushBindingsToMcServer().catch(() => {});
+            await reloadMcWhitelist().catch(() => {});
+          }
+          await logToChannel(`${interaction.user} removed ${username} from whitelist${removedBinding ? ' and bindings' : ''}.`);
           return interaction.editReply({ content: result.message });
         } catch (err) {
           console.error('Remove failed:', err.message);
-          return interaction.editReply({
-            content: sftpErrorText(err),
-          });
+          return interaction.editReply({ content: sftpErrorText(err) });
         }
       }
 
-if (commandName === 'whitelist-list') {
+            if (commandName === 'whitelist-list') {
         logCommand('whitelist-list', interaction.user);
         await interaction.deferReply({ flags: EPHEMERAL });
         try {
@@ -376,7 +430,7 @@ if (commandName === 'whitelist-list') {
         }
       }
 
-if (commandName === 'seiun-help') {
+            if (commandName === 'seiun-help') {
         logCommand('seiun-help', interaction.user);
         const isAdmin = isModerator(interaction.member);
 
@@ -434,7 +488,15 @@ if (commandName === 'seiun-help') {
           )
         );
 
-      return interaction.showModal(modal);
+      try {
+        return await interaction.showModal(modal);
+      } catch (err) {
+        console.error('Failed to show verification modal:', err.message);
+        return interaction.reply({
+          content: 'Could not open the verification form. Please use `/verify` to see your code, then run `/whitelist <username>` again.',
+          flags: EPHEMERAL,
+        });
+      }
     }
 
     // ---- Player submits verification code via modal ----
@@ -460,23 +522,32 @@ if (commandName === 'seiun-help') {
 
       clearTimeout(entry.timer);
       pending.delete(interaction.user.id);
-      await interaction.deferReply({ flags: EPHEMERAL });
+      console.log(`Modal submit: code correct for ${entry.username}, deferring...`);
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: EPHEMERAL });
+      }
+      console.log(`Modal submit: deferred, pushing bindings...`);
 
       bindings.updateLastVerified(interaction.user.id);
+      console.log(`Modal submit: pushing bindings to MC server...`);
       await pushBindingsToMcServer().catch(() => {});
+      console.log(`Modal submit: bindings pushed, checking approval channel...`);
 
       // If no approval channel is configured, add the player directly.
       if (!config.discord.approvalChannelId) {
+        console.log(`Modal submit: no approval channel, adding directly...`);
         try {
           const result = await whitelist.addPlayer(entry.username);
           if (result.added || result.already) {
             await grantVerifiedRole(interaction.member);
-            await bindings.setBinding(interaction.user.id, entry.username);
+            await bindings.setBinding(interaction.user.id, entry.username, result.uuid);
             await pushBindingsToMcServer().catch(() => {});
+            await reloadMcWhitelist().catch(() => {});
             await logToChannel(
               `✅ **${interaction.user.tag}** verified as **${entry.username}** and was ${result.already ? 'already ' : ''}whitelisted.`
             );
           }
+          console.log(`Modal submit: direct add result: ${result.message}`);
           return interaction.editReply({ content: result.message });
         } catch (err) {
           console.error('Whitelist add failed:', err.message);
@@ -485,8 +556,10 @@ if (commandName === 'seiun-help') {
       }
 
       // Otherwise, create an approval request for a moderator.
+      console.log(`Modal submit: creating approval request in channel ${config.discord.approvalChannelId}...`);
       try {
         const approvalChannel = await client.channels.fetch(config.discord.approvalChannelId);
+        console.log(`Modal submit: fetched channel ${approvalChannel ? approvalChannel.id : 'null'}`);
         if (!approvalChannel) {
           return interaction.editReply({
             content: 'The approval channel is not available. Please contact a server admin.',
@@ -521,13 +594,18 @@ if (commandName === 'seiun-help') {
         // approval still works.
         let approvalMsg;
         try {
+          console.log(`Modal submit: sending approval embed to channel...`);
           approvalMsg = await approvalChannel.send({
+            content: '@here',
+            allowedMentions: { parse: ['everyone'] },
             embeds: [approvalEmbed],
             components: [approvalRow],
           });
+          console.log(`Modal submit: approval message sent, id=${approvalMsg.id}`);
         } catch (embedErr) {
           console.error('Embed send failed, falling back to text:', embedErr.message);
           const text =
+            '@here\n\n' +
             `🛡️ **Whitelist Approval Request**\n` +
             `**Player:** ${interaction.user.tag} (<@${interaction.user.id}>)\n` +
             `**Minecraft username:** \`${entry.username}\`\n` +
@@ -535,6 +613,7 @@ if (commandName === 'seiun-help') {
             `*Approval expires in ${Math.floor(config.approvalTimeoutSeconds / 60)} minutes.*`;
           approvalMsg = await approvalChannel.send({
             content: text,
+            allowedMentions: { parse: ['everyone'] },
             components: [approvalRow],
           });
         }
@@ -569,6 +648,7 @@ if (commandName === 'seiun-help') {
             `Your verification for **${entry.username}** has been submitted. ` +
             `A moderator will review and approve your request. You'll be notified here.`,
         });
+        console.log(`Modal submit: replied to user successfully`);
       } catch (err) {
         console.error('Failed to create approval request:', err.message);
         return interaction.editReply({
@@ -598,7 +678,9 @@ if (commandName === 'seiun-help') {
       pendingApprovals.delete(interaction.message.id);
       await disableApprovalButtons(interaction.message);
 
-      await interaction.deferReply({ flags: EPHEMERAL });
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: EPHEMERAL });
+      }
 
       try {
         const result = await whitelist.addPlayer(rec.username);
@@ -633,11 +715,12 @@ if (commandName === 'seiun-help') {
             console.error('Could not grant verified role to requester:', e.message);
           }
           try {
-            bindings.setBinding(rec.userId, rec.username);
+            bindings.setBinding(rec.userId, rec.username, result.uuid);
           } catch (e) {
             console.error('Failed to save binding:', e.message);
           }
           await pushBindingsToMcServer().catch(() => {});
+          await reloadMcWhitelist().catch(() => {});
           await logToChannel(
             `✅ Moderator ${interaction.user} approved **${rec.username}** (requested by ${rec.userId}).`
           );
@@ -645,8 +728,9 @@ if (commandName === 'seiun-help') {
 
         return interaction.editReply({ content: result.message });
       } catch (err) {
-        console.error('Approval add failed:', err.message);
-        return interaction.editReply({ content: sftpErrorText(err) });
+        console.error('Approval add failed:', err);
+        const msg = sftpErrorText(err);
+        return interaction.editReply({ content: msg });
       }
     }
 
@@ -671,7 +755,9 @@ if (commandName === 'seiun-help') {
       pendingApprovals.delete(interaction.message.id);
       await disableApprovalButtons(interaction.message);
 
-      await interaction.deferReply({ flags: EPHEMERAL });
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: EPHEMERAL });
+      }
 
       // Notify the requester.
       try {
@@ -723,8 +809,14 @@ process.on('SIGINT', async () => {
 });
 
 // RCON heartbeat: kicks players whose Discord owner hasn't verified recently
+let heartbeatDisabled = false;
 async function runHeartbeat() {
-  if (!config.rcon || !config.rcon.password) return;
+  if (heartbeatDisabled) return;
+  if (!config.rcon || !config.rcon.password) {
+    console.log('Heartbeat disabled: RCON not configured');
+    heartbeatDisabled = true;
+    return;
+  }
   const rcon = new Rcon({
     host: config.rcon.host,
     port: config.rcon.port,
@@ -735,6 +827,7 @@ async function runHeartbeat() {
     const authed = await rcon.authenticate(config.rcon.password);
     if (!authed) {
       console.error('Heartbeat: RCON auth failed');
+      heartbeatDisabled = true;
       return;
     }
     const listOutput = await rcon.execute('list');
@@ -758,6 +851,10 @@ async function runHeartbeat() {
     }
   } catch (err) {
     console.error('Heartbeat error:', err.message);
+    if (err.message.includes('ETIMEDOUT') || err.message.includes('ECONNREFUSED')) {
+      heartbeatDisabled = true;
+      console.log('Heartbeat disabled due to RCON connection failure. Fix RCON_HOST/RCON_PORT/RCON_PASSWORD in .env to re-enable.');
+    }
   } finally {
     await rcon.disconnect().catch(() => {});
   }

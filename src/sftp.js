@@ -6,10 +6,10 @@ const SftpClient = require('ssh2-sftp-client');
 class SftpConnection {
   constructor({ host, port, username, password, whitelistPath }) {
     this.config = { host, port, username, password };
-    // Normalize to an absolute path for the gateway.
     this.whitelistPath = whitelistPath && whitelistPath.startsWith('/')
       ? whitelistPath
       : `/${whitelistPath || 'whitelist.json'}`;
+    console.log(`SFTP whitelist path: ${this.whitelistPath}`);
     this.client = null;
   }
 
