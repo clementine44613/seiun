@@ -1,5 +1,11 @@
 # 🐱 Meow Server — Auto-Whitelist Discord Bot
 
+![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-62b47a?logo=minecraft&logoColor=white)
+![Fabric Loader](https://img.shields.io/badge/Fabric%20Loader-%3E%3D0.18.5-2e3440?logo=fabric&logoColor=white)
+![Java](https://img.shields.io/badge/Java-21+-orange?logo=openjdk&logoColor=white)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-lightgrey)
+
 A Discord bot that **automatically adds players to your Minecraft server's whitelist** via **SFTP**, with a simple verification flow.
 
 Works with **Shockbyte's Discord-collab panel** (and most Pterodactyl panels) without needing RCON.
