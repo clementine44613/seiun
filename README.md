@@ -1,4 +1,4 @@
-# 🐱 Meow Server — Auto-Whitelist Discord Bot
+# ⛏ Minecraft Server — Auto-Whitelist Discord Bot
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-62b47a?logo=minecraft&logoColor=white)
 ![Fabric Loader](https://img.shields.io/badge/Fabric%20Loader-%3E%3D0.18.5-2e3440?logo=fabric&logoColor=white)
